@@ -1,35 +1,28 @@
-import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { EntityRepository, Repository } from 'typeorm';
 import { ApiKey, ApiKeyStatus } from '../entities/api-key.entity';
 
-@Injectable()
-export class ApiKeyRepository {
-  constructor(
-    @InjectRepository(ApiKey)
-    private readonly apiKeyRepo: Repository<ApiKey>,
-  ) {}
-
+@EntityRepository(ApiKey)
+export class ApiKeyRepository extends Repository<ApiKey> {
   /**
    * Create a new API key
    */
-  async create(apiKeyData: Partial<ApiKey>): Promise<ApiKey> {
-    const apiKey = this.apiKeyRepo.create(apiKeyData);
-    return this.apiKeyRepo.save(apiKey);
+  async createApiKey(apiKeyData: Partial<ApiKey>): Promise<ApiKey> {
+    const apiKey = this.create(apiKeyData);
+    return this.save(apiKey);
   }
 
   /**
    * Find API key by ID
    */
   async findById(id: string): Promise<ApiKey | null> {
-    return this.apiKeyRepo.findOne({ where: { id } });
+    return this.findOne({ where: { id } });
   }
 
   /**
    * Find API key by key hash
    */
   async findByKeyHash(keyHash: string): Promise<ApiKey | null> {
-    return this.apiKeyRepo.findOne({ where: { keyHash } });
+    return this.findOne({ where: { keyHash } });
   }
 
   /**
@@ -41,7 +34,7 @@ export class ApiKeyRepository {
     offset: number = 0,
     status?: ApiKeyStatus,
   ): Promise<{ data: ApiKey[]; total: number }> {
-    const query = this.apiKeyRepo.createQueryBuilder('apiKey')
+    const query = this.createQueryBuilder('apiKey')
       .where('apiKey.merchantId = :merchantId', { merchantId });
 
     if (status) {
@@ -61,7 +54,7 @@ export class ApiKeyRepository {
    * Find active API key by hash
    */
   async findActiveByKeyHash(keyHash: string): Promise<ApiKey | null> {
-    return this.apiKeyRepo.findOne({
+    return this.findOne({
       where: {
         keyHash,
         status: ApiKeyStatus.ACTIVE,
@@ -73,7 +66,7 @@ export class ApiKeyRepository {
    * Find API key that is either ACTIVE or ROTATED (for validation during grace period)
    */
   async findValidByKeyHash(keyHash: string): Promise<ApiKey | null> {
-    return this.apiKeyRepo.findOne({
+    return this.findOne({
       where: {
         keyHash,
         status: ApiKeyStatus.ACTIVE,
@@ -85,24 +78,14 @@ export class ApiKeyRepository {
    * Update API key status
    */
   async updateStatus(id: string, status: ApiKeyStatus): Promise<void> {
-    await this.apiKeyRepo
-      .createQueryBuilder()
-      .update(ApiKey)
-      .set({ status })
-      .where('id = :id', { id })
-      .execute();
+    await this.update(id, { status });
   }
 
   /**
    * Update API key with partial data
    */
-  async update(id: string, data: Partial<ApiKey>): Promise<void> {
-    await this.apiKeyRepo
-      .createQueryBuilder()
-      .update(ApiKey)
-      .set(data)
-      .where('id = :id', { id })
-      .execute();
+  async updateApiKey(id: string, data: Partial<ApiKey>): Promise<void> {
+    await this.update(id, data);
   }
 
   /**
@@ -113,7 +96,7 @@ export class ApiKeyRepository {
     if (apiKey) {
       apiKey.requestCount += 1;
       apiKey.lastUsedAt = new Date();
-      await this.apiKeyRepo.save(apiKey);
+      await this.save(apiKey);
     }
   }
 
@@ -122,7 +105,7 @@ export class ApiKeyRepository {
    */
   async findExpiredKeys(): Promise<ApiKey[]> {
     const now = new Date();
-    return this.apiKeyRepo.createQueryBuilder('apiKey')
+    return this.createQueryBuilder('apiKey')
       .where('apiKey.status = :status', { status: ApiKeyStatus.ACTIVE })
       .andWhere('apiKey.expiresAt < :now', { now })
       .getMany();
@@ -137,7 +120,7 @@ export class ApiKeyRepository {
 
     const now = new Date();
 
-    return this.apiKeyRepo.createQueryBuilder('apiKey')
+    return this.createQueryBuilder('apiKey')
       .where('apiKey.status = :status', { status: ApiKeyStatus.ACTIVE })
       .andWhere('apiKey.expiresAt BETWEEN :now AND :futureDate', {
         now,
@@ -153,7 +136,7 @@ export class ApiKeyRepository {
     const cutoffDate = new Date();
     cutoffDate.setHours(cutoffDate.getHours() - gracePeriodHours);
 
-    return this.apiKeyRepo.createQueryBuilder('apiKey')
+    return this.createQueryBuilder('apiKey')
       .where('apiKey.status = :status', { status: ApiKeyStatus.ROTATED })
       .andWhere('apiKey.updatedAt < :cutoffDate', { cutoffDate })
       .getMany();
@@ -170,7 +153,7 @@ export class ApiKeyRepository {
    * Check if merchant owns the API key
    */
   async isOwnedBy(id: string, merchantId: string): Promise<boolean> {
-    const count = await this.apiKeyRepo.count({
+    const count = await this.count({
       where: { id, merchantId },
     });
     return count > 0;
