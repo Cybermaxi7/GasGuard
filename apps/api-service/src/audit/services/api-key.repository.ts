@@ -78,14 +78,22 @@ export class ApiKeyRepository extends Repository<ApiKey> {
    * Update API key status
    */
   async updateStatus(id: string, status: ApiKeyStatus): Promise<void> {
-    await this.update(id, { status });
+    const apiKey = await this.findById(id);
+    if (apiKey) {
+      apiKey.status = status;
+      await this.save(apiKey);
+    }
   }
 
   /**
    * Update API key with partial data
    */
   async updateApiKey(id: string, data: Partial<ApiKey>): Promise<void> {
-    await this.update(id, data);
+    const apiKey = await this.findById(id);
+    if (apiKey) {
+      Object.assign(apiKey, data);
+      await this.save(apiKey);
+    }
   }
 
   /**
