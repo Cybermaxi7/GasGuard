@@ -45,7 +45,8 @@ impl SorobanRuleEngine {
             .add_rule(MissingConstructorRule::default())
             .add_rule(AdminPatternRule::default())
             .add_rule(InefficientIntegerTypesRule::default())
-            .add_rule(MissingErrorHandlingRule::default());
+            .add_rule(MissingErrorHandlingRule::default())
+            .add_rule(EmergencyWithdrawalRule::default());
     }
     
     /// Analyze Soroban contract source code
@@ -604,6 +605,81 @@ impl SorobanRule for MissingErrorHandlingRule {
                         variable_name: function.name.clone(),
                         severity: self.severity(),
                     });
+                }
+            }
+        }
+        
+        violations
+    }
+}
+
+/// Rule for detecting unrestricted emergency withdrawals
+pub struct EmergencyWithdrawalRule {
+    enabled: bool,
+}
+
+impl Default for EmergencyWithdrawalRule {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
+
+impl SorobanRule for EmergencyWithdrawalRule {
+    fn id(&self) -> &str {
+        "soroban-emergency-withdrawal"
+    }
+    
+    fn name(&self) -> &str {
+        "Unrestricted Emergency Withdrawal"
+    }
+    
+    fn description(&self) -> &str {
+        "Detects emergency withdrawal functions that lack proper authorization/whitelist checks"
+    }
+    
+    fn severity(&self) -> ViolationSeverity {
+        ViolationSeverity::High
+    }
+    
+    fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+    
+    fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+    }
+    
+    fn apply(&self, contract: &SorobanContract) -> Vec<RuleViolation> {
+        let mut violations = Vec::new();
+        
+        let emergency_keywords = ["emergency", "withdraw_all", "drain", "recover_funds", "exit_pool"];
+        
+        for implementation in &contract.implementations {
+            for function in &implementation.functions {
+                let func_name_lower = function.name.to_lowercase();
+                let is_emergency = emergency_keywords.iter().any(|k| func_name_lower.contains(k));
+                
+                if is_emergency {
+                    let func_source = &function.raw_definition;
+                    
+                    // Check for authorization patterns in Soroban
+                    let has_auth = func_source.contains(".require_auth()") || 
+                                   func_source.contains("require_auth_for_args") ||
+                                   func_source.contains("check_admin") ||
+                                   func_source.contains("is_whitelisted") ||
+                                   func_source.contains("admin.require_auth()");
+                    
+                    if !has_auth {
+                        violations.push(RuleViolation {
+                            rule_name: self.id().to_string(),
+                            description: format!("Emergency function '{}' lacks explicit authorization/whitelist checks", function.name),
+                            suggestion: "Implement '.require_auth()' or a whitelist verification to ensure only authorized addresses can trigger emergency withdrawals".to_string(),
+                            line_number: function.line_number,
+                            column_number: 0,
+                            variable_name: function.name.clone(),
+                            severity: self.severity(),
+                        });
+                    }
                 }
             }
         }
