@@ -4,6 +4,8 @@ import { Repository } from "typeorm";
 import { Transaction, TxStatus } from "./transaction.entity";
 import { RecordTransactionDto } from "./dto/record-transaction.entity";
 import { AlertQueryDto, Granularity, MetricsQueryDto, TimeSeriesQueryDto } from "./metrics-query.dto";
+import { RateLimitService, RateLimitStatus } from "./rate-limit.service";
+import { SuspiciousActivityService, SuspiciousActivityAlert } from "./suspicious-activity.service";
 
 function parsePeriod(period: string): { start: Date; end: Date } {
   const parts = period.split("-").map(Number);
@@ -51,19 +53,38 @@ export interface AlertResult {
   message?: string;
 }
 
+export interface RecordTransactionResult {
+  transaction: Transaction;
+  rateLimit: RateLimitStatus;
+  suspiciousActivity: SuspiciousActivityAlert;
+}
+
 @Injectable()
 export class TransactionsService {
   constructor(
     @InjectRepository(Transaction)
     private readonly txRepo: Repository<Transaction>,
+    private readonly rateLimitService: RateLimitService,
+    private readonly suspiciousActivityService: SuspiciousActivityService,
   ) {}
 
-  async record(dto: RecordTransactionDto): Promise<Transaction> {
+  async record(dto: RecordTransactionDto): Promise<RecordTransactionResult> {
+    // Enforce per-merchant rate limits — throws 429 if exceeded
+    const rateLimit = this.rateLimitService.check(dto.merchantId);
+
     const tx = this.txRepo.create({
       ...dto,
       timestamp: dto.timestamp ? new Date(dto.timestamp) : undefined,
     });
-    return this.txRepo.save(tx);
+    const saved = await this.txRepo.save(tx);
+
+    // Track the timestamp after a successful save
+    this.rateLimitService.record(dto.merchantId);
+
+    // Analyze for suspicious patterns
+    const suspiciousActivity = this.suspiciousActivityService.analyze(saved);
+
+    return { transaction: saved, rateLimit, suspiciousActivity };
   }
 
   /**
