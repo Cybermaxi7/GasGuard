@@ -304,6 +304,7 @@ PUT /admin/fee-configuration/settings
   "approvalRequiredUsers": ["admin-1", "admin-2"],
   "multisigSigners": ["admin-1", "admin-2", "admin-3"],
   "multisigApprovalThreshold": 2,
+  "timelockDelayMinutes": 60,
   "defaultGracePeriod": 7,
   "enableUserNotifications": true,
   "notificationChannels": ["email", "in-app"],
@@ -408,8 +409,9 @@ For large changes (configurable threshold):
 2. **Detection** - System detects change > threshold
 3. **Request** - A multisig approval request is created
 4. **Approval** - Designated signers approve the request
-5. **Implementation** - Change is applied only after threshold approvals
-6. **Audit** - Full audit trail is maintained
+5. **Timelock** - Approved changes wait until `timelockDelayMinutes` has elapsed
+6. **Implementation** - Change is applied after the scheduled delay
+7. **Audit** - Full audit trail is maintained
 
 ### Approval endpoints
 
@@ -418,6 +420,16 @@ For large changes (configurable threshold):
 - `GET /admin/fee-configuration/approval-requests/:requestId`
 - `POST /admin/fee-configuration/approval-requests/:requestId/approve`
 - `POST /admin/fee-configuration/approval-requests/:requestId/reject`
+
+### Scheduled update endpoints
+
+- `GET /admin/fee-configuration/scheduled-updates`
+- `GET /admin/fee-configuration/scheduled-updates/:updateId`
+- `POST /admin/fee-configuration/scheduled-updates/process`
+
+### Scheduled updates
+
+Scheduled updates are created when the configured `timelockDelayMinutes` is greater than zero. Approved fee changes are queued and only applied once the delay has elapsed.
 
 ### Rate Limiting
 

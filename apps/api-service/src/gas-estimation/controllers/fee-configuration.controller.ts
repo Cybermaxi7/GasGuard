@@ -173,6 +173,55 @@ export class FeeConfigurationController {
     }
   }
 
+  @Get('scheduled-updates')
+  async getScheduledUpdates(@Query('configId') configId?: string) {
+    try {
+      const scheduledUpdates = await this.feeConfigurationService.getScheduledUpdates(configId);
+      return {
+        success: true,
+        data: scheduledUpdates,
+      };
+    } catch (error) {
+      throw new HttpException(
+        error.message || 'Failed to fetch scheduled updates',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @Get('scheduled-updates/:updateId')
+  async getScheduledUpdate(@Param('updateId') updateId: string) {
+    try {
+      const scheduledUpdate = await this.feeConfigurationService.getScheduledUpdate(updateId);
+      return {
+        success: true,
+        data: scheduledUpdate,
+      };
+    } catch (error) {
+      throw new HttpException(
+        error.message || 'Failed to fetch scheduled update',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @Post('scheduled-updates/process')
+  async processScheduledUpdates() {
+    try {
+      const executedUpdates = await this.feeConfigurationService.processPendingScheduledUpdates();
+      return {
+        success: true,
+        data: executedUpdates,
+        message: 'Processed pending scheduled updates',
+      };
+    } catch (error) {
+      throw new HttpException(
+        error.message || 'Failed to process scheduled updates',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+  }
+
   @Post('approval-requests/:requestId/approve')
   async approveApprovalRequest(
     @Param('requestId') requestId: string,
