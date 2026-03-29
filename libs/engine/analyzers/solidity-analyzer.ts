@@ -91,6 +91,17 @@ export class SolidityAnalyzer extends BaseAnalyzer implements Analyzer {
       tags: ['security', 'fallback', 'receive', 'validation'],
       documentationUrl: 'https://docs.gasguard.dev/rules/sol-007',
     },
+    {
+      id: 'sol-008',
+      name: 'Unsafe External Call',
+      description:
+        'Detects external calls with unchecked return values, dangerous delegatecall usage, or Checks-Effects-Interactions (CEI) pattern violations',
+      severity: Severity.HIGH,
+      category: 'security',
+      enabled: true,
+      tags: ['security', 'external-calls', 'return-value', 'cei', 'delegatecall'],
+      documentationUrl: 'https://docs.gasguard.dev/rules/sol-008',
+    },
   ];
   
   getName(): string {
@@ -232,6 +243,28 @@ export class SolidityAnalyzer extends BaseAnalyzer implements Analyzer {
             description: 'Keep fallback minimal: reject unknown calls, avoid sensitive logic, and validate accepted ETH transfers',
             codeSnippet: 'fallback() external payable {\n    revert("Unknown function call");\n}',
             documentationUrl: 'https://docs.gasguard.dev/rules/sol-007',
+          },
+        })));
+      }
+
+      // Rule: sol-008 - Unsafe External Calls
+      if (this.isRuleEnabled('sol-008', config)) {
+        const unsafeExternalCalls = this.detectUnsafeExternalCalls(code);
+        findings.push(...unsafeExternalCalls.map(loc => ({
+          ruleId: 'sol-008',
+          message: loc.message,
+          severity: this.getRuleSeverity('sol-008', config),
+          location: {
+            file: filePath,
+            startLine: loc.startLine,
+            endLine: loc.endLine,
+          },
+          suggestedFix: {
+            description:
+              'Validate all external calls: capture and check return values, follow the Checks-Effects-Interactions pattern, and avoid delegatecall to untrusted contracts',
+            codeSnippet:
+              '// Capture and validate return value\n(bool success, ) = addr.call{value: amount}("");\nrequire(success, "External call failed");\n\n// Follow CEI: update state BEFORE the external call\nbalances[msg.sender] = 0;\n(bool ok, ) = msg.sender.call{value: amount}("");\nrequire(ok, "Transfer failed");',
+            documentationUrl: 'https://docs.gasguard.dev/rules/sol-008',
           },
         })));
       }
@@ -570,6 +603,161 @@ export class SolidityAnalyzer extends BaseAnalyzer implements Analyzer {
           endLine: startLine,
         });
       }
+    }
+
+    return findings;
+  }
+
+  /**
+   * Detects unsafe external call patterns (sol-008):
+   *  1. Unchecked return values from .call() / .staticcall()
+   *  2. Any use of .delegatecall() — executes foreign code in local storage context
+   *  3. Checks-Effects-Interactions (CEI) pattern violations — state mutations after external calls
+   */
+  private detectUnsafeExternalCalls(
+    code: string,
+  ): Array<{ startLine: number; endLine: number; message: string }> {
+    const findings: Array<{ startLine: number; endLine: number; message: string }> = [];
+    const lines = code.split('\n');
+
+    // Helpers ----------------------------------------------------------------
+
+    /** Returns true when the line (or the immediately preceding line) contains a
+     *  boolean-capture pattern such as `(bool success,` or `(bool ok,`. */
+    const hasBoolCapture = (lineIdx: number): boolean => {
+      const boolPattern = /\(\s*bool\b/;
+      if (boolPattern.test(lines[lineIdx])) return true;
+      if (lineIdx > 0 && boolPattern.test(lines[lineIdx - 1])) return true;
+      return false;
+    };
+
+    /** Returns true when the trimmed string is a comment or empty. */
+    const isCommentOrEmpty = (s: string): boolean =>
+      !s || s.startsWith('//') || s.startsWith('*') || s.startsWith('/*');
+
+    // Track multi-line block comments so we never inspect comment bodies.
+    let inBlockComment = false;
+
+    // Pass 1 — line-by-line checks -----------------------------------------
+    for (let i = 0; i < lines.length; i++) {
+      const trimmed = lines[i].trim();
+
+      // Block-comment gating
+      if (trimmed.startsWith('/*') || trimmed.startsWith('/**')) inBlockComment = true;
+      if (inBlockComment) {
+        if (trimmed.includes('*/')) inBlockComment = false;
+        continue;
+      }
+      if (trimmed.startsWith('//')) continue;
+
+      // 1a. delegatecall — always flag regardless of return-value capture.
+      //     delegatecall executes external bytecode inside the caller's own
+      //     storage; using it with an untrusted or upgradeable target is
+      //     critically dangerous.
+      if (/\.delegatecall\s*\(/.test(lines[i])) {
+        findings.push({
+          startLine: i + 1,
+          endLine: i + 1,
+          message:
+            'Use of delegatecall detected — target executes in caller storage context; ' +
+            'ensure the target contract is trusted, audited, and non-upgradeable',
+        });
+        continue; // Don't also fire the generic unchecked-call rule for the same line.
+      }
+
+      // 1b. .call() / .staticcall() without boolean return-value capture.
+      if (/\.(call|staticcall)\s*[\({]/.test(lines[i]) && !hasBoolCapture(i)) {
+        findings.push({
+          startLine: i + 1,
+          endLine: i + 1,
+          message:
+            'External call return value not checked — always capture and validate: ' +
+            '(bool success, ) = addr.call(...); require(success, "Call failed")',
+        });
+      }
+    }
+
+    // Pass 2 — function-scope CEI analysis ----------------------------------
+    // Walk function bodies and flag any mapping / state-variable write that
+    // appears AFTER the first external call inside the same function.
+
+    const externalCallInBody =
+      /\.(call|delegatecall|staticcall)\s*[\({]|\.transfer\s*\(|\.send\s*\(/;
+
+    // Identifies mapping-style state mutations: `someMapping[key] op= value`
+    const mappingMutation = /\b\w+\s*\[[^\]]+\]\s*(?:[+\-*\/%&|^]?=(?!=))/;
+
+    // Keywords that introduce local variables — lines starting with these are
+    // declarations, not state mutations.
+    const localVarKeyword =
+      /^\s*(?:uint(?:\d+)?|int(?:\d+)?|bool|address|bytes(?:\d+)?|string|mapping|struct|enum|memory|storage|calldata|var)\s+/;
+
+    let j = 0;
+    while (j < lines.length) {
+      const funcMatch = lines[j].match(/^\s*function\s+(\w+)\s*\(/);
+      if (funcMatch) {
+        const functionStartLine = j + 1;
+        let braceDepth = 0;
+        const bodyLines: Array<{ line: string; num: number }> = [];
+        let bodyStarted = false;
+
+        // Collect all lines belonging to this function.
+        for (let k = j; k < lines.length; k++) {
+          const cl = lines[k];
+          const opens = (cl.match(/\{/g) || []).length;
+          const closes = (cl.match(/\}/g) || []).length;
+          braceDepth += opens - closes;
+          if (opens > 0) bodyStarted = true;
+          if (bodyStarted) bodyLines.push({ line: cl, num: k + 1 });
+          if (bodyStarted && braceDepth === 0) {
+            j = k;
+            break;
+          }
+        }
+
+        // Find the first external call inside the function body.
+        let firstCallLineNum = -1;
+        for (const { line, num } of bodyLines) {
+          const t = line.trim();
+          if (!isCommentOrEmpty(t) && externalCallInBody.test(line)) {
+            firstCallLineNum = num;
+            break;
+          }
+        }
+
+        // Look for state mutations AFTER that first external call.
+        if (firstCallLineNum >= 0) {
+          let ceiViolationFound = false;
+          for (const { line, num } of bodyLines) {
+            if (ceiViolationFound) break;
+            if (num <= firstCallLineNum) continue;
+
+            const t = line.trim();
+            if (
+              isCommentOrEmpty(t) ||
+              t.startsWith('emit ') ||
+              t.startsWith('require(') ||
+              t.startsWith('revert') ||
+              t === '}' ||
+              localVarKeyword.test(line)
+            ) {
+              continue;
+            }
+
+            if (mappingMutation.test(t)) {
+              findings.push({
+                startLine: functionStartLine,
+                endLine: functionStartLine,
+                message:
+                  'Checks-Effects-Interactions (CEI) violation — state is mutated after an external call; ' +
+                  'move all state updates before the external interaction to prevent reentrancy',
+              });
+              ceiViolationFound = true;
+            }
+          }
+        }
+      }
+      j++;
     }
 
     return findings;
