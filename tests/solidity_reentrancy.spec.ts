@@ -219,4 +219,124 @@ describe('Solidity Reentrancy Guard Analysis', () => {
       expect(fallbackIssues).toHaveLength(0);
     });
   });
+
+  describe('External Call Validation', () => {
+    it('should detect unchecked low-level call return values', async () => {
+      const uncheckedCallContract = `
+        contract UncheckedCall {
+            function execute(address target, bytes calldata data) external {
+                target.call(data);
+            }
+        }
+      `;
+
+      const result = await engine.scan({
+        language: 'solidity',
+        source: uncheckedCallContract,
+      });
+
+      expect(result.issues).toContainEqual(
+        expect.objectContaining({
+          ruleId: 'sol-008',
+          severity: 'high',
+        })
+      );
+    });
+
+    it('should not flag low-level call when return value is captured and checked', async () => {
+      const safeCallContract = `
+        contract SafeCall {
+            function execute(address target, bytes calldata data) external {
+                (bool success, ) = target.call(data);
+                require(success, "Call failed");
+            }
+        }
+      `;
+
+      const result = await engine.scan({
+        language: 'solidity',
+        source: safeCallContract,
+      });
+
+      const uncheckedCallIssues = result.issues.filter(
+        issue => issue.ruleId === 'sol-008' && issue.message.includes('return value not checked')
+      );
+      expect(uncheckedCallIssues).toHaveLength(0);
+    });
+
+    it('should detect delegatecall usage as unsafe external interaction', async () => {
+      const delegateCallContract = `
+        contract DelegateCaller {
+            function proxy(address target, bytes calldata data) external {
+                (bool ok, ) = target.delegatecall(data);
+                require(ok, "delegatecall failed");
+            }
+        }
+      `;
+
+      const result = await engine.scan({
+        language: 'solidity',
+        source: delegateCallContract,
+      });
+
+      expect(result.issues).toContainEqual(
+        expect.objectContaining({
+          ruleId: 'sol-008',
+          message: expect.stringContaining('delegatecall'),
+        })
+      );
+    });
+
+    it('should detect CEI violations when state is updated after external calls', async () => {
+      const ceiViolationContract = `
+        contract CeiViolation {
+            mapping(address => uint256) public balances;
+
+            function withdraw(uint256 amount) external {
+                require(balances[msg.sender] >= amount, "Insufficient");
+                (bool success, ) = msg.sender.call{value: amount}("");
+                require(success, "Transfer failed");
+                balances[msg.sender] -= amount;
+            }
+        }
+      `;
+
+      const result = await engine.scan({
+        language: 'solidity',
+        source: ceiViolationContract,
+      });
+
+      expect(result.issues).toContainEqual(
+        expect.objectContaining({
+          ruleId: 'sol-008',
+          message: expect.stringContaining('CEI'),
+        })
+      );
+    });
+
+    it('should not flag CEI-compliant functions with effects before interactions', async () => {
+      const compliantCeiContract = `
+        contract CorrectCei {
+            mapping(address => uint256) public balances;
+
+            function withdraw(uint256 amount) external {
+                require(balances[msg.sender] >= amount, "Insufficient");
+                balances[msg.sender] -= amount;
+                (bool success, ) = msg.sender.call{value: amount}("");
+                require(success, "Transfer failed");
+            }
+        }
+      `;
+
+      const result = await engine.scan({
+        language: 'solidity',
+        source: compliantCeiContract,
+      });
+
+      const ceiIssues = result.issues.filter(
+        issue => issue.ruleId === 'sol-008' && issue.message.includes('CEI')
+      );
+      expect(ceiIssues).toHaveLength(0);
+    });
+  });
 });
