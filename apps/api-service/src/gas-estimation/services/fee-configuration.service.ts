@@ -562,10 +562,22 @@ export class FeeConfigurationService {
     settings: Partial<AdminFeeSettings>,
     adminUserId: string,
   ): Promise<AdminFeeSettings> {
-    this.adminSettings = {
+    const updatedSettings = {
       ...this.adminSettings,
       ...settings,
     };
+
+    if (
+      updatedSettings.multisigApprovalThreshold > 0 &&
+      updatedSettings.multisigApprovalThreshold >
+        (updatedSettings.multisigSigners?.length ?? 0)
+    ) {
+      throw new BadRequestException(
+        "Multisig approval threshold cannot exceed the number of configured signers.",
+      );
+    }
+
+    this.adminSettings = updatedSettings;
 
     this.logger.log(`Admin settings updated by ${adminUserId}`);
     return { ...this.adminSettings };
@@ -920,6 +932,8 @@ export class FeeConfigurationService {
       requireApprovalForLargeChanges: true,
       largeChangeThreshold: 25, // 25% change requires approval
       approvalRequiredUsers: [],
+      multisigSigners: [],
+      multisigApprovalThreshold: 2,
       defaultGracePeriod: 7, // 7 days
       enableUserNotifications: true,
       notificationChannels: ["email", "in-app"],
