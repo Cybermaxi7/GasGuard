@@ -130,9 +130,9 @@ impl SorobanAnalyzer {
             // Count occurrences of field name in the source (excluding struct definition)
             let field_usage_count = source.matches(&field.name).count();
             
-            // If field is only mentioned in its own declaration, it's likely unused
-            // (this is a heuristic - a more sophisticated analysis would be needed for production)
-            if field_usage_count <= 1 {
+            // Heuristic: Definition + Initialization = 2 occurrences.
+            // If it's <= 2, it's likely defined and initialized but never accessed again.
+            if field_usage_count <= 2 {
                 violations.push(RuleViolation {
                     rule_name: "unused-state-variable".to_string(),
                     description: format!("State variable '{}' appears to be unused", field.name),
@@ -205,7 +205,7 @@ impl SorobanAnalyzer {
     }
     
     /// Check for expensive operations in functions
-    fn check_expensive_operations(function: &SorobanFunction, source: &str) -> Vec<RuleViolation> {
+    fn check_expensive_operations(function: &SorobanFunction, _source: &str) -> Vec<RuleViolation> {
         let mut violations = Vec::new();
         let function_source = &function.raw_definition;
         
@@ -302,7 +302,7 @@ impl SorobanAnalyzer {
     }
     
     /// Check for unbounded loops
-    fn check_unbounded_loops(implementation: &SorobanImpl, source: &str) -> Vec<RuleViolation> {
+    fn check_unbounded_loops(implementation: &SorobanImpl, _source: &str) -> Vec<RuleViolation> {
         let mut violations = Vec::new();
         
         for function in &implementation.functions {
@@ -328,7 +328,7 @@ impl SorobanAnalyzer {
     }
     
     /// Check for inefficient storage patterns
-    fn check_storage_patterns(implementation: &SorobanImpl, source: &str) -> Vec<RuleViolation> {
+    fn check_storage_patterns(implementation: &SorobanImpl, _source: &str) -> Vec<RuleViolation> {
         let mut violations = Vec::new();
         
         // Check for multiple storage reads of the same key

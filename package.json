@@ -1,9 +1,6 @@
 {
-  "name": "gasguard",
-  "version": "1.0.0",
-  "description": "GasGuard is an open-source static analysis suite for [Stellar/EVM] developers",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "name": "gasguard-monorepo",
+  "private": true,
   "scripts": {
     "build": "tsc -b",
     "build:engine": "tsc -p libs/engine/tsconfig.json",

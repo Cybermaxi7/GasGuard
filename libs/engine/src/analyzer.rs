@@ -63,7 +63,7 @@ impl ScanAnalyzer {
         let mut estimated_savings_kb = 0.0;
 
         for violation in violations {
-            if violation.rule_name == "unused-state-variables" {
+            if violation.rule_name == "unused-state-variable" {
                 unused_vars += 1;
                 // Estimate average storage cost per unused variable
                 // This is a rough estimate - actual costs vary by type

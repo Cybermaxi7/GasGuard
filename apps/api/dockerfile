@@ -1,0 +1,56 @@
+# Build stage
+FROM node:18-alpine AS builder
+
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+COPY apps/api/package*.json ./apps/api/
+COPY libs/engine/package*.json ./libs/engine/
+COPY packages/rules/package*.json ./packages/rules/
+
+# Install dependencies
+RUN npm ci
+
+# Copy source code
+COPY . .
+
+# Build the API
+RUN npm run build --workspace=apps/api
+
+# Production stage
+FROM node:18-alpine
+
+RUN apk add --no-cache tini
+
+WORKDIR /app
+
+# Create non-root user
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S nodejs -u 1001
+
+# Copy package files and installed node_modules
+COPY --from=builder --chown=nodejs:nodejs /app/package*.json ./
+COPY --from=builder --chown=nodejs:nodejs /app/apps/api/package*.json ./apps/api/
+COPY --from=builder --chown=nodejs:nodejs /app/libs/engine/package*.json ./libs/engine/
+COPY --from=builder --chown=nodejs:nodejs /app/packages/rules/package*.json ./packages/rules/
+COPY --from=builder --chown=nodejs:nodejs /app/node_modules ./node_modules
+
+# Copy built application
+COPY --from=builder --chown=nodejs:nodejs /app/dist ./dist
+
+# Set environment
+ENV NODE_ENV=production
+ENV PORT=3000
+
+# Expose port
+EXPOSE 3000
+
+# Switch to non-root user
+USER nodejs
+
+# Use tini as init process
+ENTRYPOINT ["/sbin/tini", "--"]
+
+# Start the API
+CMD ["node", "dist/apps/api/main.js"]
